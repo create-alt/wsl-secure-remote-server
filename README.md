@@ -6,17 +6,16 @@
 **完成条件：**
 * スマートフォン(iOS)から公開鍵認証を用いてのみWSLへSSH接続できること（パスワード認証の完全無効化）。
 * 複数回の認証失敗に対して、fail2banが適切にIPをブロックすること。
-* 接続後、コマンド一つでWSL上のカメラ制御プログラム（OpenCV）が起動し、画像が保存されること。
+* 接続後、コマンド一つでWSL上のプログラムが起動し、実行時の日時が取得・表示されること。
 
 ## 2. 前提条件
 * **対象OS:** Ubuntu 22.04 LTS (Windows 11 WSL2 上で稼働)
 * **実行環境:** ローカルVM (WSL2)
 * **クライアント環境:** iOS 18.5 (アプリ: Termius を使用)
-* **利用ツール・パッケージ:** `apt`, `ufw`, `fail2ban`, `python3`, `pip`, `usbipd-win` (Windows側)
+* **利用ツール・パッケージ:** `apt`, `ufw`, `fail2ban`, `python3`
 * **ネットワーク条件:** ローカルネットワーク（Wi-Fi）。Windowsホスト経由のポートフォワーディングを利用。
 
 ## 3. 全体構成図とポート設計
-
 
 * **通信経路:** iPhone(Termius) → [Wi-Fi] → Windows 11 (Port: 2222) → [Port Proxy] → WSL2 Ubuntu (Port: 22)
 * **使用ポート:**
@@ -36,24 +35,15 @@ Windows PowerShellを**管理者権限**で実行し、以下のコマンドを�
 
 ```powershell
 # Windowsの2222番ポートへのアクセスをWSLの22番ポートへ転送
-netsh interface portproxy add v4tov4 listenport=2222 listenaddress=0.0.0.0 connectport=22 connectaddress=172.18.0.5
+netsh interface portproxy add v4tov4 listenport=2222 listenaddress=0.0.0.0 connectport=22 connectaddress=[ここにwslのip]
 
 # Windowsファイアウォールで2222番ポートの外部からの受信を許可
 New-NetFirewallRule -DisplayName "WSL SSH" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 2222
 ```
 
-**3. USBカメラの接続準備 (usbipd)**
-PowerShell(管理者)でカメラデバイスをWSLにアタッチする。
-```powershell
-usbipd list
-# カメラをWSLに接続 (例: BUSIDが 2-1 の場合)
-usbipd bind --busid 2-1
-usbipd attach --wsl --busid 2-1
-```
-
 ## 5. 構築手順 (WSL/Ubuntu側の設定)
 
-### 5.1 パッケージの更新とSSH導入
+### 5.1 パッケージの更新と基本設定
 ```bash
 sudo apt update && sudo apt upgrade -y
 sudo apt install openssh-server -y
@@ -112,65 +102,140 @@ sudo nano /etc/ssh/sshd_config
 **【設定ファイル完全版】 `/etc/ssh/sshd_config`** (権限: 644)
 ※主要な設定箇所のみ抜粋。
 ```text
+# This is the sshd server system-wide configuration file.  See
+# sshd_config(5) for more information.
+
+# This sshd was compiled with PATH=/usr/bin:/bin:/usr/sbin:/sbin
+
+# The strategy used for options in the default sshd_config shipped with
+# OpenSSH is to specify options with their default value where
+# possible, but leave them commented.  Uncommented options override the
+# default value.
+
 Include /etc/ssh/sshd_config.d/*.conf
+
 Port 22
-AddressFamily any
+#AddressFamily any
 ListenAddress 0.0.0.0
-Protocol 2
-LoginGraceTime 2m
+#ListenAddress ::
+
+#HostKey /etc/ssh/ssh_host_rsa_key
+#HostKey /etc/ssh/ssh_host_ecdsa_key
+#HostKey /etc/ssh/ssh_host_ed25519_key
+
+# Ciphers and keying
+#RekeyLimit default none
+
+# Logging
+#SyslogFacility AUTH
+#LogLevel INFO
+
+# Authentication:
+
+#LoginGraceTime 2m
 PermitRootLogin no
-StrictModes yes
-MaxAuthTries 3
-MaxSessions 10
+#StrictModes yes
+#MaxAuthTries 6
+#MaxSessions 10
+
 PubkeyAuthentication yes
-AuthorizedKeysFile .ssh/authorized_keys
-PasswordAuthentication no  # パスワード認証を無効化
+
+# Expect .ssh/authorized_keys2 to be disregarded by default in future.
+#AuthorizedKeysFile     .ssh/authorized_keys .ssh/authorized_keys2
+
+#AuthorizedPrincipalsFile none
+
+#AuthorizedKeysCommand none
+#AuthorizedKeysCommandUser nobody
+
+# For this to work you will also need host keys in /etc/ssh/ssh_known_hosts
+#HostbasedAuthentication no
+# Change to yes if you don't trust ~/.ssh/known_hosts for
+# HostbasedAuthentication
+#IgnoreUserKnownHosts no
+# Don't read the user's ~/.rhosts and ~/.shosts files
+#IgnoreRhosts yes
+
+# To disable tunneled clear text passwords, change to no here!
+PasswordAuthentication no
 PermitEmptyPasswords no
-ChallengeResponseAuthentication no
+
+# Change to yes to enable challenge-response passwords (beware issues with
+# some PAM modules and threads)
+KbdInteractiveAuthentication no
+
+# Kerberos options
+#KerberosAuthentication no
+#KerberosOrLocalPasswd yes
+#KerberosTicketCleanup yes
+#KerberosGetAFSToken no
+
+# GSSAPI options
+#GSSAPIAuthentication no
+#GSSAPICleanupCredentials yes
+#GSSAPIStrictAcceptorCheck yes
+#GSSAPIKeyExchange no
+
+# Set this to 'yes' to enable PAM authentication, account processing,
+# and session processing. If this is enabled, PAM authentication will
+# be allowed through the KbdInteractiveAuthentication and
+# PasswordAuthentication.  Depending on your PAM configuration,
+# PAM authentication via KbdInteractiveAuthentication may bypass
+# the setting of "PermitRootLogin without-password".
+# If you just want the PAM account and session checks to run without
+# PAM authentication, then enable this but set PasswordAuthentication
+# and KbdInteractiveAuthentication to 'no'.
 UsePAM yes
+
+#AllowAgentForwarding yes
+#AllowTcpForwarding yes
+#GatewayPorts no
 X11Forwarding yes
+#X11DisplayOffset 10
+#X11UseLocalhost yes
+#PermitTTY yes
 PrintMotd no
+#PrintLastLog yes
+#TCPKeepAlive yes
+#PermitUserEnvironment no
+#Compression delayed
+#ClientAliveInterval 0
+#ClientAliveCountMax 3
+#UseDNS no
+#PidFile /var/run/sshd.pid
+#MaxStartups 10:30:100
+#PermitTunnel no
+#ChrootDirectory none
+#VersionAddendum none
+
+# no default banner path
+#Banner none
+
+# Allow client to pass locale environment variables
 AcceptEnv LANG LC_*
-Subsystem sftp /usr/lib/openssh/sftp-server
+
+# override default of no subsystems
+Subsystem       sftp    /usr/lib/openssh/sftp-server
 ```
 ```bash
 sudo service ssh restart
 ```
 
-### 5.5 遠隔実行用プログラム (OpenCVカメラ制御) の配置
+### 5.5 遠隔実行用プログラム (日時取得スクリプト) の配置
+Pythonを用いて現在の日時を出力するシンプルなスクリプトを作成する。
+
 ```bash
-sudo apt install python3-opencv python3-pip -y
-nano ~/capture.py
+# 実行スクリプトの作成
+nano ~/time_check.py
 ```
 
-**【ソースコード完全版】 `~/capture.py`** (権限: 644)
+**【ソースコード完全版】 `~/time_check.py`** (権限: 644)
 ```python
-import cv2
 import datetime
-import os
-import sys
 
-def main():
-    print(f"[{datetime.datetime.now()}] カメラ処理を開始します...")
-    cap = cv2.VideoCapture(0)
-    
-    if not cap.isOpened():
-        print("エラー: カメラを開けませんでした。")
-        sys.exit(1)
+dt_now = datetime.datetime.now()
 
-    ret, frame = cap.read()
-    if ret:
-        filename = f"remote_capture_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-        filepath = os.path.join(os.path.expanduser("~"), filename)
-        cv2.imwrite(filepath, frame)
-        print(f"成功: 画像を保存しました -> {filepath}")
-    else:
-        print("エラー: 画像フレームの取得に失敗しました。")
-
-    cap.release()
-
-if __name__ == "__main__":
-    main()
+print(dt_now)
 ```
 
 ### 5.6 スマートフォン (iOS 18.5) 側の接続準備
@@ -187,47 +252,58 @@ explorer.exe ~/.ssh
 **2. Termius (iOSアプリ) の設定**
 1. App Storeから **Termius** をインストールして起動する。
 2. **鍵のインポート:**
-   * 左上のメニュー（三本線）から `Keychain`（または `Keys`）を開く。
+   * 左下の"Vaults"を押し、画面中の `Keychain` を開く。
    * 右上の `+` ボタンをタップし、`Import Key` を選択。
-   * iPhoneの「ファイル」アプリが起動するので、先ほど保存した `id_ed25519` を選択してインポートする。
+   * iPhoneの「ファイル」アプリから、先ほど保存した `id_ed25519` を選択してインポートする。
 3. **接続先 (Host) の作成:**
-   * `Hosts` 画面に戻り、右上の `+` ボタンから `New Host` を選択。
-   * 以下のように入力する。
-     * **Alias:** 任意の名前 (例: WSL Camera Server)
+   * "Vaults"から`Hosts` 画面に戻り、右上の `+` ボタンから `New Host` を選択。
+   * 以下の通り入力する。
+     * **Label:** 任意の名前 (例: WSL Server)
      * **Hostname or IP Address:** WindowsのIPアドレス (例: `192.168.1.10`)
      * **Port:** `2222`
-     * **Username:** WSLのユーザー名
-     * **Key:** 先ほどインポートした `id_ed25519` を選択する。
+     * **Credentials(以下2項目だけ設定)**
+       * **Username:** WSLのユーザー名
+       * **Key:** インポートした `id_ed25519` を選択。
    * 右上の `Save` をタップして保存。
 
-> [画像挿入：TermiusのHost設定画面（IP、Port、Username、Keyが設定されている状態）]
+<!-- ![Setting Image](./images/setting_page.PNG) -->
+<img width="250" alt="Setting Image" src="./images/setting_page.PNG">
+
 
 ## 6. 動作確認と検証
 
 **1. 疎通確認と公開鍵認証のテスト (iOS側)**
 * Termiusの `Hosts` 一覧から作成したホストをタップする。
-* 初回接続時の警告 (Fingerprintの確認) が出たら `Continue` をタップする。
+* 初回接続時の警告が出たら `Continue` をタップ。
 * パスワードを入力することなく、WSLのターミナル画面が表示されることを確認する。
-> [画像挿入：iPhone(Termius)上でWSLにログイン成功したターミナル画面のスクリーンショット]
+<!-- ![Access Image](./images/access_img.PNG) -->
+<img width="250" alt="Access Image" src="./images/access_img.PNG">
 
 **2. プログラムの遠隔実行 (iOS側)**
-* iPhoneのTermiusの画面で、以下のコマンドをソフトウェアキーボードで入力して実行する。
+* iPhoneのTermiusの画面で、以下のコマンドを実行する。
 ```bash
-python3 ~/capture.py
+python3 ~/time_check.py
 ```
-* 「成功: 画像を保存しました」と表示された後、`ls -l *.jpg` を実行し、画像ファイルが生成されていることを確認する。
-> [画像挿入：iPhone上でコマンドを実行し、成功メッセージと画像ファイルが表示されたスクリーンショット]
+* 実行時の日時（例: `2026-02-20 23:16:05.123456`）がターミナル上に正しく出力されることを確認する。
+<!-- ![Running Image](./images/running_img.PNG) -->
+<img width="250" alt="Running Image" src="./images/running_img.PNG">
 
 **3. セキュリティ動作確認 (fail2ban) (サーバ側)**
 * 意図的に鍵の設定を外すなどしてパスワード認証を試み、数回ログインを失敗させる。
 * サーバ（WSL）側で `sudo fail2ban-client status sshd` を実行し、BanされたIP（iPhoneのIPアドレス）がリストに追加されていることを確認する。
-> [画像挿入：fail2banによってBanされたIPリストの表示]
+
+<img width="250" alt="Running Image" src="./images/banned_image.PNG">
+
+* WSL側でのログでも以下のようにiPhoneのIPがbanされている
+
+<img width="500" alt="Running Image" src="./images/banned_log.png">
 
 ## 7. トラブルシューティング
-* **iPhoneからConnection RefusedやTimeoutになる**
-  * Windowsファイアウォールで2222番が許可されていない、またはiPhoneとPCが同じWi-Fiルーターに接続されていない。
-* **Termiusで "Permission denied (publickey)" と出る**
-  * サーバ側で `chmod 600 ~/.ssh/authorized_keys` の設定が漏れている、またはTermiusで指定した鍵が間違っている。
+
+| 現象 | 原因 | 対処 |
+| :--- | :--- | :--- |
+| **iPhoneからConnection RefusedやTimeoutになる** | WindowsファイアウォールまたはIP設定 | PowerShellでファイアウォールルールを確認。`ipconfig`でIPが変わっていないか見直す。 |
+| **Permission denied (publickey)** | 鍵の不一致または権限設定 | 秘密鍵が正しいか確認。サーバ側で `chmod 600 ~/.ssh/authorized_keys` を再実行。 |
 
 ## 8. セキュリティ配慮
 * **パスワード認証の完全無効化:** ブルートフォース攻撃を防ぐため、`sshd_config` で `PasswordAuthentication no` とし、鍵を持つ端末からしかアクセスできない設計とした。
@@ -236,4 +312,11 @@ python3 ~/capture.py
 ## 9. 参考資料
 * [OpenSSH Server - Ubuntu Documentation](https://ubuntu.com/server/docs/service-openssh)
 * [Fail2ban - Community Help Wiki](https://help.ubuntu.com/community/Fail2ban)
-* [USB デバイスを接続する - Windows Subsystem for Linux](https://learn.microsoft.com/ja-jp/windows/wsl/connect-usb)
+* [Python 3 Official Documentation](https://docs.python.org/ja/3/)
+
+## 10. おわりに（まとめ）
+本課題では、公開鍵認証やfail2banを用いたセキュアなSSHサーバ環境を構築し、動作検証としてシンプルな日時取得プログラムをスマートフォンから遠隔で実行した。
+
+しかし、この構築された環境の真の価値は、**「あらかじめ任意のコードをWSL上に設定しておくことで、外出先からでもスマートフォン一つで安全かつ即座に任意の処理を実行できる基盤が完成した」**という点にある。
+
+例えば、今回実行した `time_check.py` の中身を、定期的なスクレイピング処理、自宅内ネットワークのIoT機器（スマート家電やカメラ等）の制御コマンド、あるいはPCのリソースを要するバッチ処理などに書き換えるだけで、このサーバは強力なリモートコントロールハブとして機能する。発展的なセキュリティ設定によって外部からの脅威を排除しつつ、柔軟なプログラム実行を可能にする実践的なインフラ基盤を構築できた。
